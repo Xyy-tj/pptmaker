@@ -35,6 +35,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    // Ensure we are working in the app directory for portable data access
+    if (app.isPackaged) {
+        try {
+            process.chdir(path.dirname(app.getPath('exe')));
+        } catch (e) {
+            console.error('Failed to set working directory:', e);
+        }
+    }
+
     createWindow();
 
     app.on('activate', () => {

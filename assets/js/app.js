@@ -65,6 +65,9 @@ window.updateGeneratorProjectList = function(projects) {
 function init() {
     loadConfig();
     
+    // Ensure slides directory exists (and copy defaults if needed)
+    initSlidesDirectory();
+
     renderProjectList();
     initSettings();
     
@@ -89,6 +92,55 @@ function init() {
     }
 }
 
+function initSlidesDirectory() {
+    if (!fs || !path) return;
+    
+    const userSlidesDir = path.join(process.cwd(), 'slides');
+    
+    // Ensure user slides directory exists
+    if (!fs.existsSync(userSlidesDir)) {
+        try {
+            fs.mkdirSync(userSlidesDir, { recursive: true });
+            console.log('Created slides directory:', userSlidesDir);
+        } catch (e) {
+            console.error('Failed to create slides directory:', e);
+        }
+    }
+    
+    // Try to copy embedded slides if they exist (for demo project)
+    const demoDirName = 'openclaw-intro';
+    const userDemoDir = path.join(userSlidesDir, demoDirName);
+    
+    if (!fs.existsSync(userDemoDir)) {
+         try {
+             // Look for embedded slides in ASAR or resource path
+             // In packaged app: app.asar/slides/openclaw-intro
+             const embeddedDemoDir = path.resolve(__dirname, '../../slides', demoDirName);
+             
+             if (fs.existsSync(embeddedDemoDir)) {
+                 // Check if we can use cpSync (Node 16.7+)
+                 if (fs.cpSync) {
+                     fs.cpSync(embeddedDemoDir, userDemoDir, { recursive: true });
+                     console.log('Copied demo slides from embedded resources');
+                 } else {
+                     // Fallback
+                     fs.mkdirSync(userDemoDir, { recursive: true });
+                     const files = fs.readdirSync(embeddedDemoDir);
+                     files.forEach(file => {
+                         const src = path.join(embeddedDemoDir, file);
+                         const dest = path.join(userDemoDir, file);
+                         if (fs.statSync(src).isFile()) {
+                             fs.copyFileSync(src, dest);
+                         }
+                     });
+                 }
+             }
+         } catch (e) {
+             console.warn('Could not copy embedded slides', e);
+         }
+    }
+}
+
 function loadConfig() {
     if (!fs) {
         // Fallback for browser mode without Node integration
@@ -105,11 +157,39 @@ function loadConfig() {
             projectsData = JSON.parse(data);
             window.appConfig = projectsData; // Keep backward compatibility for now
         } else {
+            // Try to load default from embedded resources (in ASAR)
+            try {
+                // If running from packaged app, __dirname is inside app.asar/assets/js
+                // So ../../projects.json is at app.asar/projects.json
+                const embeddedConfigPath = path.resolve(__dirname, '../../projects.json');
+                
+                if (fs.existsSync(embeddedConfigPath)) {
+                    const data = fs.readFileSync(embeddedConfigPath, 'utf8');
+                    projectsData = JSON.parse(data);
+                    
+                    // Write to user directory so it's editable
+                    // But only if we have permission? Let's try.
+                    try {
+                        fs.writeFileSync(configPath, data, 'utf8');
+                        console.log('Initialized projects.json from embedded template');
+                    } catch (e) {
+                        console.warn('Could not write projects.json to user directory', e);
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not load embedded config', e);
+            }
+
             // Fallback to initial config if file doesn't exist
-            console.warn('projects.json not found, using default config');
-            if (window.appConfig) {
-                projectsData = window.appConfig;
-                saveConfig(); // Create the file
+            if (!projectsData) {
+                console.warn('projects.json not found, using default config');
+                if (window.appConfig) {
+                    projectsData = window.appConfig;
+                    saveConfig(); // Create the file
+                } else {
+                    projectsData = { projects: [] };
+                    saveConfig();
+                }
             }
         }
     } catch (err) {
@@ -734,7 +814,11 @@ if (previewPrevBtn) previewPrevBtn.onclick = () => loadSlide(currentSlideIndex -
 if (previewNextBtn) previewNextBtn.onclick = () => loadSlide(currentSlideIndex + 1);
 
 // Initialize App
-init();
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
 
 // --- Slide Scaling Logic ---
 function adjustSlideScale() {
